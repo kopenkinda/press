@@ -10,7 +10,7 @@ let package = Package(
         .target(
             name: "PressCore",
             path: ".",
-            exclude: ["Artwork", "scripts", "Tests", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md",
+            exclude: ["Artwork", "docs", "scripts", "Tests", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md",
                       "Resources/Info.plist", "Sources/Press/PressApp.swift", "Sources/Press/ContentView.swift",
                       "Sources/Press/ArchiveViewController.swift"],
             sources: ["Sources/Press"],
