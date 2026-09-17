@@ -37,7 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let models = Array(archives.values)
-        guard models.contains(where: \.isBusy) else { return .terminateNow }
+        guard models.contains(where: \.isBusy) else {
+            for model in models { model.clearQuickLook() }
+            return .terminateNow
+        }
         for model in models { model.cancel() }
         Task {
             for model in models { await model.stop() }
@@ -61,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let window = notification.object as? NSWindow else { return }
         closing.remove(window)
         if let model = archives.removeValue(forKey: window) {
+            model.clearQuickLook()
             Task { await model.stop() }
         }
     }
@@ -80,9 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.tabbingIdentifier = "PressArchives"
         window.tabbingMode = .preferred
         window.delegate = self
-        window.contentViewController = NSHostingController(rootView: ContentView(model: model,
-            openArchives: { [weak self] in self?.openArchives($0) },
-            chooseArchives: { [weak self] in self?.chooseArchive() }))
+        window.contentViewController = ArchiveViewController(model: model,
+            dropArchives: { [weak self] in self?.openArchives($0, behavior: .onDrop) },
+            chooseArchives: { [weak self] in self?.chooseArchive() })
         window.isReleasedWhenClosed = false
         model.window = window
         archives[window] = model
@@ -93,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return window
     }
 
-    private func openArchives(_ urls: [URL]) {
+    private func openArchives(_ urls: [URL], behavior: OpenBehavior = .current) {
         for url in urls {
             if let existing = archives.first(where: { $0.value.source?.standardizedFileURL == url.standardizedFileURL })?.key {
                 existing.makeKeyAndOrderFront(nil)
@@ -103,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.title = url.lastPathComponent
             window.tab.title = url.lastPathComponent
             window.representedURL = url
-            archives[window]?.open(url)
+            archives[window]?.open(url, behavior: behavior)
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.activate(ignoringOtherApps: true)

@@ -19,6 +19,18 @@ and sizes beside them. Use the disclosure arrows or keyboard arrow keys to
 explore. Folders appear even when the archive only stores file paths. The
 compressed and reported expanded sizes appear above the tree.
 
+Select a single file and press Space, or use its Quick Look context menu, to
+preview it in macOS's native Quick Look panel. Space or Escape closes the panel.
+Only that file is written into a private temporary folder. Solid archives and
+compressed TAR files may still require decoding other data to reach it. A
+preview is limited to 100 MB and 60 seconds and uses the same password flow
+and sandbox as extraction. Formats Quick Look cannot render show its normal
+file information instead.
+
+The temporary file remains available for Quick Look's Open With action until
+the next file preview, archive reload, tab closure, or app quit. Changes to a
+temporary copy do not update the archive.
+
 Click Extract, then choose a destination folder. Press creates
 a new folder named after the archive there. If that name exists, Press adds a
 number. Original archives and existing destination files remain untouched.
@@ -38,15 +50,19 @@ its temporary folder. After extraction, Show in Finder reveals the result.
 Open Press > Settings with Command-comma. The General and File Types tabs use
 native macOS toolbar tabs.
 
-General controls what happens when opening an archive through Finder, Open,
-or drag and drop:
+General has independent settings for opening archives through Finder or Open,
+and for dropping archives into a Press window. Each setting offers:
 
 - Preview in Press, the default.
 - Extract Beside the Archive, into a new folder named after the archive.
 - Choose Where to Extract, which opens the destination chooser.
 
+Both settings default to Preview in Press. Existing opening preferences are
+preserved when upgrading; the new drop setting starts with preview. You can
+use Extract Beside the Archive for Finder and Preview in Press for drops.
+
 All modes inspect the archive first and enforce the same extraction limits.
-Changing this setting affects newly opened archives. Reloading an existing
+Changing a setting affects newly opened archives. Reloading an existing
 preview never triggers automatic extraction.
 
 File Types lists the registered extensions with their current default apps.
@@ -90,6 +106,7 @@ Developer ID signing or notarization.
 
 - `PressApp.swift` owns native window tabs, Finder opening, and menus.
 - `ContentView.swift` owns the file list, drop area, and password sheet.
+- `ArchiveViewController.swift` connects each window to macOS Quick Look.
 - `ArchiveModel.swift` owns one archive's preview and extraction state.
 - `SettingsWindow.swift` owns opening preferences and file association actions.
 - `Extractor.swift` lists archives, applies limits, and publishes completed folders.
@@ -140,11 +157,12 @@ or change file associations. Pass `--filter ModelTests` to run a subset.
 
 The suite covers folder trees, ZIP/ZIPX, RAR, 7z, TAR and compressed TAR,
 standalone compressed files, password prompts and retries, per-tab isolation,
-opening preferences, cancellation, destination collisions, changed archives,
+opening and drop preferences, Quick Look file selection and cleanup,
+cancellation, destination collisions, changed archives,
 unsafe paths, links, size and entry limits, and Finder registration metadata.
 Large logical-size checks use sparse files instead of allocating 10 GB.
 
-Native window/tab interactions, destination sheets, macOS association consent,
-and icon appearance still need manual checks. The suite samples supported
+Native window/tab interactions, Quick Look presentation, destination sheets,
+macOS association consent, and icon appearance still need manual checks. The suite samples supported
 formats and compression methods; it does not exercise every 7-Zip codec.
 See [third-party notices](THIRD_PARTY_NOTICES.md) for the engine's license and source.

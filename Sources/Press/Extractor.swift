@@ -88,6 +88,22 @@ struct ArchivePreview: Sendable {
     let blockedReason: String?
 }
 
+// One private file owned by an archive tab. Explicit removal handles tab
+// closure; deinit also cleans up a result discarded during cancellation.
+final class PreviewFile: Sendable {
+    let fileURL: URL
+    let entryID: Int
+    let directory: URL
+
+    init(fileURL: URL, entryID: Int, directory: URL) {
+        self.fileURL = fileURL
+        self.entryID = entryID
+        self.directory = directory
+    }
+    func remove() { try? FileManager.default.removeItem(at: directory) }
+    deinit { remove() }
+}
+
 struct Extractor: Sendable {
     let helperURL: URL?
 
@@ -97,6 +113,7 @@ struct Extractor: Sendable {
 
     static let sizeLimit: Int64 = 10_000_000_000
     static let entryLimit = 10_000
+    static let previewSizeLimit: Int64 = 100_000_000
     private static let logLimit: Int64 = 16 * 1024 * 1024
 
     func inspect(_ source: URL, password: String?) async throws -> ArchivePreview {
@@ -164,6 +181,47 @@ struct Extractor: Sendable {
         throw ExtractionError(message: "Too many folders already have this archive's name.")
     }
 
+    func preparePreview(_ source: URL, entryID: Int, preview: ArchivePreview, password: String?) async throws -> PreviewFile {
+        var source = source
+        source.removeAllCachedResourceValues()
+        try Self.validate(source)
+        let current = try source.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        guard Int64(current.fileSize ?? 0) == preview.archiveSize, current.contentModificationDate == preview.modified else {
+            throw ExtractionError(message: "The archive changed. Reload its preview before opening a file.")
+        }
+        guard let entry = preview.entries.first(where: { $0.id == entryID }), !entry.isDirectory, !entry.isLink,
+              preview.entries.filter({ $0.path == entry.path }).count == 1 else {
+            throw ExtractionError(message: "Choose a single file with a unique path to preview.")
+        }
+        guard (entry.size ?? 0) <= Self.previewSizeLimit else {
+            throw ExtractionError(message: "Quick Look previews are limited to 100 MB per file.")
+        }
+        let staging = try Self.temporaryFolder(in: FileManager.default.temporaryDirectory)
+        var keep = false
+        defer { if !keep { try? FileManager.default.removeItem(at: staging) } }
+        let contents = staging.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: false)
+        // Process normalizes macOS command-line arguments to decomposed Unicode.
+        // A UTF-8 list file preserves the archive's exact spelling, including
+        // composed accents. Wildcard matching and recursion stay disabled.
+        let selection = staging.appendingPathComponent("selection.txt")
+        try Data((entry.path + "\n").utf8).write(to: selection)
+        _ = try await run(["e", "-y", "-aou", "-bb0", "-snld0", "-spd", "-ssc", "-r-", "-scsUTF-8",
+                           "-i@\(selection.path)", "-o\(contents.path)"],
+                          source: source, password: password, staging: staging, contents: contents,
+                          outputLimit: Self.previewSizeLimit, timeLimit: 60)
+        try Self.checkOutput(contents, limit: Self.previewSizeLimit)
+        let files = try FileManager.default.contentsOfDirectory(at: contents, includingPropertiesForKeys: [.isRegularFileKey])
+        guard files.count == 1, let file = files.first,
+              try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true,
+              file.lastPathComponent == entry.path.split(separator: "/").last.map(String.init) else {
+            throw ExtractionError(message: "Couldn't isolate this file for Quick Look.")
+        }
+        try Task.checkCancellation()
+        keep = true
+        return PreviewFile(fileURL: file, entryID: entry.id, directory: staging)
+    }
+
     private static func validate(_ source: URL) throws {
         guard source.isFileURL else {
             throw ExtractionError(message: "Choose a local archive or container file.")
@@ -187,7 +245,8 @@ struct Extractor: Sendable {
         return URL(fileURLWithPath: String(decoding: template.dropLast().map { UInt8(bitPattern: $0) }, as: UTF8.self), isDirectory: true)
     }
 
-    private func run(_ arguments: [String], source: URL, password: String?, staging: URL, contents: URL? = nil) async throws -> String {
+    private func run(_ arguments: [String], source: URL, password: String?, staging: URL, contents: URL? = nil,
+                     outputLimit: Int64 = sizeLimit, timeLimit: TimeInterval? = nil) async throws -> String {
         guard let helper = helperURL,
               FileManager.default.isExecutableFile(atPath: helper.path) else {
             throw ExtractionError(message: "The extraction helper is missing. Rebuild Press and try again.")
@@ -270,8 +329,8 @@ struct Extractor: Sendable {
                         throw ExtractionError(message: "The archive's listing is too large for this prototype.")
                     }
                 }
-                if let contents { try Self.checkOutput(contents) }
-                else if Date().timeIntervalSince(started) > 60 {
+                if let contents { try Self.checkOutput(contents, limit: outputLimit) }
+                if Date().timeIntervalSince(started) > (timeLimit ?? (contents == nil ? 60 : .infinity)) {
                     throw ExtractionError(message: "Reading the archive took too long. The preview was stopped.")
                 }
                 if process.isRunning || decoder?.isRunning == true { try await Task.sleep(for: .milliseconds(200)) }
@@ -359,7 +418,7 @@ struct Extractor: Sendable {
 
     // Header sizes are untrusted. Monitor actual logical sizes and entry count
     // while the helper runs, and check again before publishing the result.
-    static func checkOutput(_ contents: URL) throws {
+    static func checkOutput(_ contents: URL, limit: Int64 = sizeLimit) throws {
         var enumerationError: Error?
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
         guard let files = FileManager.default.enumerator(at: contents, includingPropertiesForKeys: Array(keys),
@@ -380,8 +439,8 @@ struct Extractor: Sendable {
                 guard let fileSize = values.fileSize, fileSize >= 0 else {
                     throw ExtractionError(message: "Couldn't determine the extracted file's size.")
                 }
-                guard Int64(fileSize) <= sizeLimit - size else {
-                    throw ExtractionError(message: "Extraction stopped because the output exceeded 10 GB.")
+                guard Int64(fileSize) <= limit - size else {
+                    throw ExtractionError(message: limit == previewSizeLimit ? "Quick Look previews are limited to 100 MB per file." : "Extraction stopped because the output exceeded 10 GB.")
                 }
                 size += Int64(fileSize)
             }

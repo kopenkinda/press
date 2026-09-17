@@ -2,11 +2,12 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var model: ArchiveModel
-    let openArchives: ([URL]) -> Void
+    let dropArchives: ([URL]) -> Void
+    var presentQuickLook: (URL?) -> Void = { _ in }
     let chooseArchives: () -> Void
     @State private var targeted = false
     @State private var selection: Set<ArchiveNode.ID> = []
-    @AppStorage(OpenBehavior.defaultsKey) private var openBehavior = OpenBehavior.preview.rawValue
+    @AppStorage(OpenBehavior.dropDefaultsKey) private var dropBehavior = OpenBehavior.preview.rawValue
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,6 +45,22 @@ struct ContentView: View {
                     }
                     .width(90)
                 }
+                .onKeyPress(.space) {
+                    guard !model.isBusy, let entry = selectedEntry else { return .ignored }
+                    if model.quickLookURL != nil { model.dismissQuickLook() }
+                    else { model.quickLook(entry.id) }
+                    return .handled
+                }
+                .contextMenu(forSelectionType: ArchiveNode.ID.self) { ids in
+                    Button("Quick Look") {
+                        if let entry = selectedEntry(in: ids) {
+                            selection = ids
+                            model.quickLook(entry.id)
+                        }
+                    }
+                    .disabled(model.isBusy || selectedEntry(in: ids) == nil)
+                }
+                .help("Select a file and press Space for Quick Look.")
                 if preview.entries.isEmpty {
                     Text("This archive is empty.").foregroundStyle(.secondary).padding()
                 }
@@ -74,14 +91,34 @@ struct ContentView: View {
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
             guard !files.isEmpty else { return false }
-            openArchives(files)
+            dropArchives(files)
             return true
         } isTargeted: { targeted = $0 }
+        .onChange(of: model.quickLookURL) { _, url in
+            if url != nil, model.quickLookEntryID != selectedEntry?.id {
+                model.dismissQuickLook()
+            } else {
+                presentQuickLook(url)
+            }
+        }
+        .onChange(of: selection) { _, _ in
+            if model.quickLookURL != nil, !model.isBusy {
+                if let entry = selectedEntry { model.quickLook(entry.id) }
+                else { model.dismissQuickLook() }
+            }
+        }
         .sheet(isPresented: $model.needsPassword) {
             PasswordPrompt(name: model.source?.lastPathComponent ?? "Archive", hint: model.passwordHint,
                            submit: model.submitPassword)
                 .interactiveDismissDisabled()
         }
+    }
+
+    private var selectedEntry: ArchiveEntry? { selectedEntry(in: selection) }
+
+    private func selectedEntry(in ids: Set<ArchiveNode.ID>) -> ArchiveEntry? {
+        guard ids.count == 1, let id = ids.first else { return nil }
+        return model.preview?.entries.first { "file:\($0.id)" == id && !$0.isDirectory && !$0.isLink }
     }
 
     private var emptyView: some View {
@@ -98,7 +135,7 @@ struct ContentView: View {
     }
 
     private var openingDescription: String {
-        switch OpenBehavior(rawValue: openBehavior) ?? .preview {
+        switch OpenBehavior(rawValue: dropBehavior) ?? .preview {
         case .preview: "Look inside before extracting."
         case .extractBeside: "Extract into a new folder beside each archive."
         case .chooseDestination: "Choose where to extract each archive."
@@ -126,9 +163,10 @@ struct ContentView: View {
             }
             HStack {
                 if model.isBusy {
-                    if model.phase == .extracting {
+                    if model.phase == .extracting || model.phase == .preparingPreview {
                         ProgressView().controlSize(.small)
-                        Text("Extracting…").font(.callout).foregroundStyle(.secondary)
+                        Text(model.phase == .preparingPreview ? "Preparing Quick Look…" : "Extracting…")
+                            .font(.callout).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Cancel", action: model.cancel)

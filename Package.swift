@@ -11,7 +11,8 @@ let package = Package(
             name: "PressCore",
             path: ".",
             exclude: ["Artwork", "scripts", "Tests", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md",
-                      "Resources/Info.plist", "Sources/Press/PressApp.swift", "Sources/Press/ContentView.swift"],
+                      "Resources/Info.plist", "Sources/Press/PressApp.swift", "Sources/Press/ContentView.swift",
+                      "Sources/Press/ArchiveViewController.swift"],
             sources: ["Sources/Press"],
             resources: [.copy("Resources/ArchiveFormats.json")]
         ),

@@ -70,3 +70,7 @@ shutil.copyfile(Path(__file__).parent / "Fixtures/Encrypted.rar", root / "Encryp
 
 for name in ["Tree.tar.zst", "hello.txt.zst"]:
     shutil.copyfile(Path(__file__).parent / "Fixtures" / name, root / name)
+
+with zipfile.ZipFile(root / "LiteralNames.zip", "w") as archive:
+    for name in ["report?.txt", "report1.txt", "Folder/report*.txt", "Folder/report-all.txt", "@notes.txt", "-notes.txt", "A.txt", "a.txt", "café.txt", "Folder/café.txt", "カフェ.txt"]:
+        archive.writestr(name, name.encode())

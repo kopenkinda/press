@@ -3,15 +3,26 @@ import Observation
 
 @MainActor @Observable
 final class ArchiveModel {
-    enum Phase { case empty, loading, ready, extracting, password, failed }
+    enum Phase { case empty, loading, ready, extracting, preparingPreview, password, failed }
     private enum Operation: Sendable {
-        case preview, extract(URL)
+        case preview, extract(URL), quickLook(Int)
+        var phase: Phase {
+            switch self {
+            case .preview: .loading
+            case .extract: .extracting
+            case .quickLook: .preparingPreview
+            }
+        }
+        var isQuickLook: Bool {
+            if case .quickLook = self { return true }
+            return false
+        }
         var isPreview: Bool {
             if case .preview = self { return true }
             return false
         }
     }
-    private enum Result: Sendable { case preview(ArchivePreview), extracted(URL) }
+    private enum Result: Sendable { case preview(ArchivePreview), extracted(URL), quickLook(PreviewFile) }
 
     @ObservationIgnored private let extractor: Extractor
 
@@ -24,6 +35,9 @@ final class ArchiveModel {
     private(set) var preview: ArchivePreview?
     private(set) var output: URL?
     private(set) var message: String?
+    private(set) var quickLookURL: URL?
+    private(set) var quickLookEntryID: Int?
+    @ObservationIgnored private var quickLookFile: PreviewFile?
     var needsPassword = false
     private(set) var passwordHint: String?
     @ObservationIgnored weak var window: NSWindow?
@@ -33,20 +47,39 @@ final class ArchiveModel {
     @ObservationIgnored private var passwordReply: CheckedContinuation<String?, Never>?
     @ObservationIgnored private var stopping = false
 
-    var isBusy: Bool { [.loading, .extracting, .password].contains(phase) }
+    var isBusy: Bool { [.loading, .extracting, .preparingPreview, .password].contains(phase) }
     var canExtract: Bool { preview != nil && preview?.blockedReason == nil && !isBusy }
 
-    func open(_ url: URL) {
+    func open(_ url: URL, behavior: OpenBehavior = .current) {
         guard source == nil else { return }
         source = url
-        perform(.preview, then: OpenBehavior.current)
+        perform(.preview, then: behavior)
     }
 
     func reload() {
         guard !isBusy else { return }
+        clearQuickLook()
         preview = nil
         output = nil
         perform(.preview)
+    }
+
+    func quickLook(_ entryID: Int) {
+        guard !isBusy, let entry = preview?.entries.first(where: { $0.id == entryID }),
+              !entry.isDirectory, !entry.isLink else { return }
+        dismissQuickLook()
+        perform(.quickLook(entryID))
+    }
+
+    func dismissQuickLook() {
+        quickLookURL = nil
+        quickLookEntryID = nil
+    }
+
+    func clearQuickLook() {
+        dismissQuickLook()
+        quickLookFile?.remove()
+        quickLookFile = nil
     }
 
     func chooseDestination() {
@@ -67,8 +100,8 @@ final class ArchiveModel {
     private func perform(_ operation: Operation, then behavior: OpenBehavior = .preview) {
         guard !isBusy, !stopping, let source else { return }
         message = nil
-        output = nil
-        phase = operation.isPreview ? .loading : .extracting
+        if !operation.isQuickLook { output = nil }
+        phase = operation.phase
         task = Task {
             var previewCompleted = false
             defer {
@@ -85,7 +118,7 @@ final class ArchiveModel {
                 }
             }
             while !stopping {
-                phase = operation.isPreview ? .loading : .extracting
+                phase = operation.phase
                 let attemptPassword = password
                 let currentPreview = preview
                 let extractor = extractor
@@ -97,6 +130,10 @@ final class ArchiveModel {
                         guard let currentPreview else { throw ExtractionError(message: "Read the archive before extracting.") }
                         return Result.extracted(try await extractor.extract(source, to: destination,
                                                                           preview: currentPreview, password: attemptPassword))
+                    case .quickLook(let entryID):
+                        guard let currentPreview else { throw ExtractionError(message: "Read the archive before previewing a file.") }
+                        return Result.quickLook(try await extractor.preparePreview(source, entryID: entryID,
+                                                                                   preview: currentPreview, password: attemptPassword))
                     }
                 }
                 worker = attempt
@@ -106,6 +143,11 @@ final class ArchiveModel {
                         preview = value
                         previewCompleted = true
                     case .extracted(let folder): output = folder
+                    case .quickLook(let file):
+                        quickLookFile?.remove()
+                        quickLookFile = file
+                        quickLookEntryID = file.entryID
+                        quickLookURL = file.fileURL
                     }
                     phase = .ready
                 } catch is PasswordRequired {
@@ -150,5 +192,6 @@ final class ArchiveModel {
         cancel()
         await task?.value
         password = nil
+        clearQuickLook()
     }
 }

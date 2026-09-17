@@ -102,4 +102,64 @@ struct ModelTests {
         #expect(!second.isBusy)
         await first.stop()
     }
+
+    @Test func dropPreferenceIsIndependentOfOpeningPreference() async throws {
+        let defaults = UserDefaults.standard
+        let openSaved = defaults.object(forKey: OpenBehavior.defaultsKey)
+        let dropSaved = defaults.object(forKey: OpenBehavior.dropDefaultsKey)
+        defer {
+            defaults.set(openSaved, forKey: OpenBehavior.defaultsKey)
+            defaults.set(dropSaved, forKey: OpenBehavior.dropDefaultsKey)
+        }
+        defaults.set(OpenBehavior.extractBeside.rawValue, forKey: OpenBehavior.defaultsKey)
+        defaults.removeObject(forKey: OpenBehavior.dropDefaultsKey)
+        #expect(OpenBehavior.current == .extractBeside)
+        #expect(OpenBehavior.onDrop == .preview)
+        let workspace = try Workspace()
+        defer { workspace.remove() }
+        let dropped = ArchiveModel(extractor: engine)
+        dropped.open(try workspace.copy("Tree.zip"), behavior: .onDrop)
+        try await waitUntil { !dropped.isBusy }
+        #expect(dropped.canExtract)
+        #expect(dropped.output == nil)
+        #expect(try workspace.names() == ["Tree.zip"])
+        await dropped.stop()
+        defaults.set(OpenBehavior.chooseDestination.rawValue, forKey: OpenBehavior.dropDefaultsKey)
+        #expect(OpenBehavior.onDrop == .chooseDestination)
+        #expect(OpenBehavior.current == .extractBeside)
+        defaults.set("obsolete", forKey: OpenBehavior.dropDefaultsKey)
+        #expect(OpenBehavior.onDrop == .preview)
+    }
+
+    @Test func quickLookRetriesPasswordAndCleansUpWithTab() async throws {
+        let model = ArchiveModel(extractor: engine)
+        defer { model.cancel() }
+        model.open(try fixture("Encrypted.zip"), behavior: .preview)
+        try await waitUntil { !model.isBusy }
+        let entry = try #require(model.preview?.entries.first)
+        model.quickLook(entry.id)
+        try await waitUntil { model.needsPassword || !model.isBusy }
+        try #require(model.needsPassword)
+        model.submitPassword("wrong")
+        try await waitUntil { model.needsPassword || !model.isBusy }
+        try #require(model.needsPassword)
+        #expect(model.passwordHint != nil)
+        model.submitPassword("secret")
+        try await waitUntil { !model.isBusy }
+        let url = try #require(model.quickLookURL)
+        #expect(try String(contentsOf: url, encoding: .utf8) == "Hello from Press.\n")
+        #expect(model.output == nil)
+        model.dismissQuickLook()
+        #expect(model.quickLookURL == nil)
+        #expect(FileManager.default.fileExists(atPath: url.path)) // Keep Open With usable after Quick Look closes.
+        model.quickLook(entry.id)
+        try await waitUntil { !model.isBusy }
+        let replacement = try #require(model.quickLookURL)
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        #expect(FileManager.default.fileExists(atPath: replacement.path))
+        await model.stop()
+        #expect(!FileManager.default.fileExists(atPath: replacement.path))
+        #expect(model.quickLookURL == nil)
+    }
+
 }

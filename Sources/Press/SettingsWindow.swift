@@ -6,6 +6,10 @@ import UniformTypeIdentifiers
 enum OpenBehavior: String, CaseIterable, Identifiable {
     case preview, extractBeside, chooseDestination
     static let defaultsKey = "openBehavior"
+    static let dropDefaultsKey = "dropBehavior"
+    static var onDrop: Self {
+        Self(rawValue: UserDefaults.standard.string(forKey: dropDefaultsKey) ?? "") ?? .preview
+    }
     static var current: Self {
         Self(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .preview
     }
@@ -52,6 +56,7 @@ final class SettingsWindow: NSWindowController {
 
 private struct GeneralSettings: View {
     @AppStorage(OpenBehavior.defaultsKey) private var behavior = OpenBehavior.preview.rawValue
+    @AppStorage(OpenBehavior.dropDefaultsKey) private var dropBehavior = OpenBehavior.preview.rawValue
 
     var body: some View {
         Form {
@@ -60,9 +65,14 @@ private struct GeneralSettings: View {
                     Text(option.label).tag(option.rawValue)
                 }
             }
-            Text("Applies to Finder, Open, and drag and drop.")
+            Picker("When dropping into Press:", selection: $dropBehavior) {
+                ForEach(OpenBehavior.allCases) { option in
+                    Text(option.label).tag(option.rawValue)
+                }
+            }
+            Text("Opening applies to Finder and Open. Dropping applies to Press windows.")
                 .font(.callout).foregroundStyle(.secondary)
-            if behavior != OpenBehavior.preview.rawValue {
+            if behavior != OpenBehavior.preview.rawValue || dropBehavior != OpenBehavior.preview.rawValue {
                 Text("Extracts into a new folder named after the archive. Size and entry limits still apply.")
                     .font(.callout).foregroundStyle(.secondary)
             }
