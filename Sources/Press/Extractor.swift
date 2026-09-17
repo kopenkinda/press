@@ -88,18 +88,26 @@ struct ArchivePreview: Sendable {
     let blockedReason: String?
 }
 
-enum Extractor {
+struct Extractor: Sendable {
+    let helperURL: URL?
+
+    init(helperURL: URL? = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("7zz")) {
+        self.helperURL = helperURL
+    }
+
     static let sizeLimit: Int64 = 10_000_000_000
     static let entryLimit = 10_000
     private static let logLimit: Int64 = 16 * 1024 * 1024
 
-    static func inspect(_ source: URL, password: String?) async throws -> ArchivePreview {
-        try validate(source)
+    func inspect(_ source: URL, password: String?) async throws -> ArchivePreview {
+        var source = source
+        source.removeAllCachedResourceValues()
+        try Self.validate(source)
         let original = try source.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
-        let staging = try temporaryFolder(in: FileManager.default.temporaryDirectory)
+        let staging = try Self.temporaryFolder(in: FileManager.default.temporaryDirectory)
         defer { try? FileManager.default.removeItem(at: staging) }
         let output = try await run(["l", "-slt", "-ba"], source: source, password: password, staging: staging)
-        let entries = try parseListing(output, fallbackName: source.deletingPathExtension().lastPathComponent)
+        let entries = try Self.parseListing(output, fallbackName: source.deletingPathExtension().lastPathComponent)
         var total: Int64 = 0
         var knownSize = true
         var blocked: String?
@@ -110,7 +118,8 @@ enum Extractor {
             total = sum.partialValue
             if entry.isLink { blocked = "This archive contains links. This prototype only extracts files and folders." }
         }
-        if total > sizeLimit { blocked = "The reported expanded size exceeds this prototype's 10 GB limit." }
+        if total > Self.sizeLimit { blocked = "The reported expanded size exceeds this prototype's 10 GB limit." }
+        source.removeAllCachedResourceValues()
         let current = try source.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         guard current.fileSize == original.fileSize, current.contentModificationDate == original.contentModificationDate else {
             throw ExtractionError(message: "The archive changed while it was being read. Reload the preview.")
@@ -120,8 +129,11 @@ enum Extractor {
                               modified: current.contentModificationDate ?? .distantPast, blockedReason: blocked)
     }
 
-    static func extract(_ source: URL, to parent: URL, preview: ArchivePreview, password: String?) async throws -> URL {
-        try validate(source)
+    func extract(_ source: URL, to parent: URL, preview: ArchivePreview, password: String?) async throws -> URL {
+        // Reusing the URL from preview can otherwise reuse stale file metadata.
+        var source = source
+        source.removeAllCachedResourceValues()
+        try Self.validate(source)
         if let reason = preview.blockedReason { throw ExtractionError(message: reason) }
         let current = try source.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         guard Int64(current.fileSize ?? 0) == preview.archiveSize,
@@ -133,13 +145,13 @@ enum Extractor {
            Int64(available) < (preview.expandedSize ?? 0) + 100_000_000 {
             throw ExtractionError(message: "There isn't enough free space in that destination.")
         }
-        let staging = try temporaryFolder(in: parent)
+        let staging = try Self.temporaryFolder(in: parent)
         defer { try? FileManager.default.removeItem(at: staging) }
         let contents = staging.appendingPathComponent("Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: false)
         _ = try await run(["x", "-y", "-aou", "-bb0", "-snld0", "-o\(contents.path)"],
                           source: source, password: password, staging: staging, contents: contents)
-        try checkOutput(contents)
+        try Self.checkOutput(contents)
         let name = ArchiveFormats.folderName(for: source)
         for suffix in 1...10_000 {
             try Task.checkCancellation()
@@ -162,15 +174,21 @@ enum Extractor {
     }
 
     private static func temporaryFolder(in parent: URL) throws -> URL {
-        var template = Array(parent.resolvingSymlinksInPath().appendingPathComponent(".press-XXXXXX").path.utf8CString)
+        // Foundation preserves aliases such as /var on macOS. Sandbox path
+        // rules need the actual /private/var path, including for temporary files.
+        guard let canonicalParent = realpath(parent.path, nil) else {
+            throw ExtractionError(message: "Couldn't resolve the destination folder.")
+        }
+        defer { free(canonicalParent) }
+        var template = Array((String(cString: canonicalParent) + "/.press-XXXXXX").utf8CString)
         guard mkdtemp(&template) != nil else {
             throw ExtractionError(message: "Couldn't create a temporary folder. Choose a writable destination with free space.")
         }
         return URL(fileURLWithPath: String(decoding: template.dropLast().map { UInt8(bitPattern: $0) }, as: UTF8.self), isDirectory: true)
     }
 
-    private static func run(_ arguments: [String], source: URL, password: String?, staging: URL, contents: URL? = nil) async throws -> String {
-        guard let helper = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("7zz"),
+    private func run(_ arguments: [String], source: URL, password: String?, staging: URL, contents: URL? = nil) async throws -> String {
+        guard let helper = helperURL,
               FileManager.default.isExecutableFile(atPath: helper.path) else {
             throw ExtractionError(message: "The extraction helper is missing. Rebuild Press and try again.")
         }
@@ -227,7 +245,7 @@ enum Extractor {
                     do {
                         var count: Int64 = 0
                         while let block = try reader.read(upToCount: 64 * 1024), !block.isEmpty {
-                            guard Int64(block.count) <= sizeLimit - count else {
+                            guard Int64(block.count) <= Self.sizeLimit - count else {
                                 throw ExtractionError(message: "The decompressed TAR stream exceeds the 10 GB limit.")
                             }
                             count += Int64(block.count)
@@ -246,33 +264,39 @@ enum Extractor {
             }
             repeat {
                 try Task.checkCancellation()
-                for url in [logURL, decoderLogURL] {
-                    guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= logLimit else {
+                for var url in [logURL, decoderLogURL] {
+                    url.removeAllCachedResourceValues()
+                    guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= Self.logLimit else {
                         throw ExtractionError(message: "The archive's listing is too large for this prototype.")
                     }
                 }
-                if let contents { try checkOutput(contents) }
+                if let contents { try Self.checkOutput(contents) }
                 else if Date().timeIntervalSince(started) > 60 {
                     throw ExtractionError(message: "Reading the archive took too long. The preview was stopped.")
                 }
                 if process.isRunning || decoder?.isRunning == true { try await Task.sleep(for: .milliseconds(200)) }
             } while process.isRunning || decoder?.isRunning == true
-            process.waitUntilExit()
-            decoder?.waitUntilExit()
             try Task.checkCancellation()
         } catch {
-            for child in [process, decoderStarted ? decoder : nil].compactMap({ $0 }) {
-                if child.isRunning { kill(child.processIdentifier, SIGKILL) }
-                child.waitUntilExit()
-            }
+            let children = [process, decoderStarted ? decoder : nil].compactMap { $0 }
+            for child in children where child.isRunning { kill(child.processIdentifier, SIGKILL) }
+            // Process updates isRunning after reaping. Blocking waitUntilExit
+            // can hang when an async task resumes on a different thread.
+            // Cleanup must finish even when the caller has been cancelled.
+            await Task.detached {
+                while children.contains(where: { $0.isRunning }) {
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+            }.value
             _ = try? await stream?.value
             throw error
         }
         var streamError: Error?
         do { try await stream?.value } catch { streamError = error }
         if let error = streamError as? ExtractionError { throw error }
-        for url in [logURL, decoderLogURL] {
-            guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= logLimit else {
+        for var url in [logURL, decoderLogURL] {
+            url.removeAllCachedResourceValues()
+            guard (try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= Self.logLimit else {
                 throw ExtractionError(message: "The archive's listing is too large for this prototype.")
             }
         }
@@ -290,7 +314,7 @@ enum Extractor {
         return output
     }
 
-    private static func parseListing(_ output: String, fallbackName: String) throws -> [ArchiveEntry] {
+    static func parseListing(_ output: String, fallbackName: String) throws -> [ArchiveEntry] {
         var entries: [ArchiveEntry] = []
         var fields: [String: String] = [:]
         func finish() throws {
@@ -335,7 +359,7 @@ enum Extractor {
 
     // Header sizes are untrusted. Monitor actual logical sizes and entry count
     // while the helper runs, and check again before publishing the result.
-    private static func checkOutput(_ contents: URL) throws {
+    static func checkOutput(_ contents: URL) throws {
         var enumerationError: Error?
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
         guard let files = FileManager.default.enumerator(at: contents, includingPropertiesForKeys: Array(keys),

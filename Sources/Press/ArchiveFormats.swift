@@ -9,7 +9,12 @@ enum ArchiveFormats {
     // Catalogue matches the pinned 7-Zip 26.03 runtime. Detection itself is
     // delegated to the engine, so unknown extensions remain openable.
     static let all: [ArchiveFormat] = {
-        guard let url = Bundle.main.url(forResource: "ArchiveFormats", withExtension: "json"),
+        #if SWIFT_PACKAGE
+        let bundle = Bundle.module
+        #else
+        let bundle = Bundle.main
+        #endif
+        guard let url = bundle.url(forResource: "ArchiveFormats", withExtension: "json"),
               let data = try? Data(contentsOf: url),
               let formats = try? JSONDecoder().decode([ArchiveFormat].self, from: data) else { return [] }
         return formats

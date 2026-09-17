@@ -131,5 +131,20 @@ The helper's write restrictions use macOS `sandbox-exec`, a deprecated system
 tool available on the development machine's macOS 27 build. Revisit that
 boundary before distributing the app.
 
-No automated test suite is included for this prototype.
+## Tests
+
+Run `./scripts/test.sh` with the same Xcode and Python requirements as the app.
+It prepares small local fixtures, then uses Swift Testing to exercise the real
+7-Zip helper under the app's sandbox rules. It does not install Press, open UI,
+or change file associations. Pass `--filter ModelTests` to run a subset.
+
+The suite covers folder trees, ZIP/ZIPX, RAR, 7z, TAR and compressed TAR,
+standalone compressed files, password prompts and retries, per-tab isolation,
+opening preferences, cancellation, destination collisions, changed archives,
+unsafe paths, links, size and entry limits, and Finder registration metadata.
+Large logical-size checks use sparse files instead of allocating 10 GB.
+
+Native window/tab interactions, destination sheets, macOS association consent,
+and icon appearance still need manual checks. The suite samples supported
+formats and compression methods; it does not exercise every 7-Zip codec.
 See [third-party notices](THIRD_PARTY_NOTICES.md) for the engine's license and source.

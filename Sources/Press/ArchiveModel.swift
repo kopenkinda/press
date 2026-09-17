@@ -13,6 +13,12 @@ final class ArchiveModel {
     }
     private enum Result: Sendable { case preview(ArchivePreview), extracted(URL) }
 
+    @ObservationIgnored private let extractor: Extractor
+
+    init(extractor: Extractor = Extractor()) {
+        self.extractor = extractor
+    }
+
     private(set) var source: URL?
     private(set) var phase = Phase.empty
     private(set) var preview: ArchivePreview?
@@ -82,13 +88,14 @@ final class ArchiveModel {
                 phase = operation.isPreview ? .loading : .extracting
                 let attemptPassword = password
                 let currentPreview = preview
+                let extractor = extractor
                 let attempt = Task.detached(priority: .userInitiated) {
                     switch operation {
                     case .preview:
-                        return Result.preview(try await Extractor.inspect(source, password: attemptPassword))
+                        return Result.preview(try await extractor.inspect(source, password: attemptPassword))
                     case .extract(let destination):
                         guard let currentPreview else { throw ExtractionError(message: "Read the archive before extracting.") }
-                        return Result.extracted(try await Extractor.extract(source, to: destination,
+                        return Result.extracted(try await extractor.extract(source, to: destination,
                                                                           preview: currentPreview, password: attemptPassword))
                     }
                 }
