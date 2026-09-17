@@ -61,6 +61,13 @@ Both settings default to Preview in Press. Existing opening preferences are
 preserved when upgrading; the new drop setting starts with preview. You can
 use Extract Beside the Archive for Finder and Preview in Press for drops.
 
+Extract Beside the Archive runs without opening an archive window. An encrypted
+archive shows a standalone password dialog; failures show an alert. Multiple
+archives are processed in sequence. Each finished folder is revealed in Finder.
+Press exits when these jobs finish if no
+browser or Settings window is open. Existing windows remain open, and launching
+Press itself still opens its normal drop window.
+
 All modes inspect the archive first and enforce the same extraction limits.
 Changing a setting affects newly opened archives. Reloading an existing
 preview never triggers automatic extraction.

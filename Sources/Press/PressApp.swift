@@ -8,7 +8,7 @@ struct PressApp {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
-        app.setActivationPolicy(.regular)
+        app.setActivationPolicy(.accessory)
         NSWindow.allowsAutomaticWindowTabbing = false
         withExtendedLifetime(delegate) { _ = NSApplicationMain(CommandLine.argc, CommandLine.unsafeArgv) }
     }
@@ -19,13 +19,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var archives: [NSWindow: ArchiveModel] = [:]
     private var closing: Set<NSWindow> = []
     private var settings: SettingsWindow?
+    private var pendingExtractions: [URL] = []
+    private var directExtraction: DirectExtraction?
+    private var receivedOpenRequest = false
+    private var terminating = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMenu()
-        if archives.isEmpty { _ = makeWindow() }
+        // Finder's document-open event must get a chance to claim this launch
+        // before a normal app launch creates an empty browser window.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.receivedOpenRequest, self.archives.isEmpty,
+                  self.directExtraction == nil, !self.terminating else { return }
+            _ = self.makeWindow()
+        }
     }
 
-    func application(_ application: NSApplication, open urls: [URL]) { openArchives(urls) }
+    func application(_ application: NSApplication, open urls: [URL]) {
+        receivedOpenRequest = true
+        openArchives(urls)
+    }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if let window = currentWindow { window.makeKeyAndOrderFront(nil) }
@@ -33,10 +46,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return false
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        directExtraction == nil && pendingExtractions.isEmpty
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let models = Array(archives.values)
+        terminating = true
+        pendingExtractions.removeAll()
+        directExtraction?.cancel()
+        let models = Array(archives.values) + [directExtraction?.model].compactMap { $0 }
         guard models.contains(where: \.isBusy) else {
             for model in models { model.clearQuickLook() }
             return .terminateNow
@@ -75,6 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func makeWindow(beside anchor: NSWindow? = nil) -> NSWindow {
+        NSApp.setActivationPolicy(.regular)
         let model = ArchiveModel()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 680, height: 480),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -98,6 +117,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func openArchives(_ urls: [URL], behavior: OpenBehavior = .current) {
+        if behavior == .extractBeside {
+            for url in urls {
+                let url = url.standardizedFileURL
+                if directExtraction?.source != url && !pendingExtractions.contains(url) {
+                    pendingExtractions.append(url)
+                }
+            }
+            startNextExtraction()
+            return
+        }
         for url in urls {
             if let existing = archives.first(where: { $0.value.source?.standardizedFileURL == url.standardizedFileURL })?.key {
                 existing.makeKeyAndOrderFront(nil)
@@ -111,6 +140,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func startNextExtraction() {
+        guard !terminating, directExtraction == nil else { return }
+        guard !pendingExtractions.isEmpty else {
+            // Leave deliberately opened browser/settings windows alone. A launch
+            // used only to extract files exits after the final job or cancellation.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.terminating, self.directExtraction == nil,
+                      self.pendingExtractions.isEmpty, self.archives.isEmpty,
+                      self.settings?.window?.isVisible != true else { return }
+                NSApp.terminate(nil)
+            }
+            return
+        }
+        let source = pendingExtractions.removeFirst()
+        let job = DirectExtraction(source: source) { [weak self] in
+            self?.directExtraction = nil
+            self?.startNextExtraction()
+        }
+        directExtraction = job
+        job.start()
     }
 
     @objc private func chooseArchive() {
@@ -131,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func newWindowForTab(_ sender: Any?) { _ = makeWindow(beside: currentWindow) }
     @objc private func showSettings() {
+        NSApp.setActivationPolicy(.regular)
         if settings == nil { settings = SettingsWindow() }
         settings?.showWindow(nil)
         settings?.window?.makeKeyAndOrderFront(nil)

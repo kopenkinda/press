@@ -162,4 +162,70 @@ struct ModelTests {
         #expect(model.quickLookURL == nil)
     }
 
+
+    @Test(arguments: ["Tree.zip", "Encrypted.7z", "Encrypted.zip"])
+    func directExtractionFinishesOnceAfterWritingOutput(name: String) async throws {
+        let workspace = try Workspace()
+        defer { workspace.remove() }
+        let model = ArchiveModel(extractor: engine)
+        var passwordRequests = 0
+        var completions = 0
+        var completionError: String?
+        model.onPasswordRequest = {
+            passwordRequests += 1
+            model.submitPassword(passwordRequests == 1 ? "wrong" : "secret")
+        }
+        model.onCompletion = { error in
+            completions += 1
+            completionError = error
+            #expect(model.output != nil) // A successful listing alone must not finish the job.
+            #expect(!model.isBusy)
+        }
+        defer { model.onPasswordRequest = nil; model.onCompletion = nil; model.cancel() }
+        model.open(try workspace.copy(name), behavior: .extractBeside)
+        try await waitUntil { completions > 0 }
+        #expect(completions == 1)
+        #expect(completionError == nil)
+        #expect(passwordRequests == (name == "Tree.zip" ? 0 : 2))
+        let output = try #require(model.output)
+        #expect(FileManager.default.fileExists(atPath: output.path))
+        #expect(try workspace.names() == [name, output.lastPathComponent].sorted())
+        await model.stop()
+    }
+
+    @Test(arguments: ["Link.tar", "Broken.zip"])
+    func directExtractionReportsFailuresWithoutLeavingOutput(name: String) async throws {
+        let workspace = try Workspace()
+        defer { workspace.remove() }
+        let model = ArchiveModel(extractor: engine)
+        var completions = 0
+        var completionError: String?
+        model.onCompletion = { error in completions += 1; completionError = error }
+        model.open(try workspace.copy(name), behavior: .extractBeside)
+        try await waitUntil { completions > 0 }
+        #expect(completions == 1)
+        #expect(completionError != nil)
+        #expect(model.output == nil)
+        #expect(try workspace.names() == [name])
+        await model.stop()
+    }
+
+    @Test func cancellingDirectExtractionPasswordFinishesWithoutAnError() async throws {
+        let workspace = try Workspace()
+        defer { workspace.remove() }
+        let model = ArchiveModel(extractor: engine)
+        var completions = 0
+        model.onPasswordRequest = { model.submitPassword(nil) }
+        model.onCompletion = { error in completions += 1; #expect(error == nil) }
+        defer { model.onPasswordRequest = nil; model.cancel() }
+        model.open(try workspace.copy("Encrypted.7z"), behavior: .extractBeside)
+        try await waitUntil { completions > 0 }
+        #expect(completions == 1)
+        #expect(!model.needsPassword)
+        #expect(!model.isBusy)
+        #expect(model.output == nil)
+        #expect(try workspace.names() == ["Encrypted.7z"])
+        await model.stop()
+    }
+
 }

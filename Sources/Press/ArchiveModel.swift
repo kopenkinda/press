@@ -46,6 +46,9 @@ final class ArchiveModel {
     @ObservationIgnored private var worker: Task<Result, Error>?
     @ObservationIgnored private var passwordReply: CheckedContinuation<String?, Never>?
     @ObservationIgnored private var stopping = false
+    // Windowless extraction uses the same password retry and safety flow as tabs.
+    @ObservationIgnored var onPasswordRequest: (() -> Void)?
+    @ObservationIgnored var onCompletion: ((String?) -> Void)?
 
     var isBusy: Bool { [.loading, .extracting, .preparingPreview, .password].contains(phase) }
     var canExtract: Bool { preview != nil && preview?.blockedReason == nil && !isBusy }
@@ -104,17 +107,17 @@ final class ArchiveModel {
         phase = operation.phase
         task = Task {
             var previewCompleted = false
+            var failure: String?
             defer {
                 task = nil
                 worker = nil
                 // Apply the opening preference once, only after a successful
                 // inspection. Reloading a preview never extracts again.
-                if previewCompleted && !stopping && canExtract {
-                    switch behavior {
-                    case .preview: break
-                    case .extractBeside: perform(.extract(source.deletingLastPathComponent()))
-                    case .chooseDestination: chooseDestination()
-                    }
+                if previewCompleted && !stopping && canExtract && behavior == .extractBeside {
+                    perform(.extract(source.deletingLastPathComponent()))
+                } else {
+                    if previewCompleted && !stopping && canExtract && behavior == .chooseDestination { chooseDestination() }
+                    onCompletion?(failure ?? (previewCompleted ? preview?.blockedReason : nil))
                 }
             }
             while !stopping {
@@ -159,6 +162,7 @@ final class ArchiveModel {
                     let reply = await withCheckedContinuation { continuation in
                         passwordReply = continuation
                         needsPassword = true
+                        onPasswordRequest?()
                     }
                     if let reply { password = reply; continue }
                     phase = preview == nil ? .failed : .ready
@@ -169,6 +173,7 @@ final class ArchiveModel {
                 } catch {
                     phase = preview == nil ? .failed : .ready
                     message = error.localizedDescription
+                    failure = error.localizedDescription
                 }
                 break
             }
