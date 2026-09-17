@@ -1,0 +1,417 @@
+[
+  {
+    "name": "7z",
+    "extensions": [
+      "7z"
+    ]
+  },
+  {
+    "name": "APFS",
+    "extensions": [
+      "apfs",
+      "img"
+    ]
+  },
+  {
+    "name": "APM",
+    "extensions": [
+      "apm"
+    ]
+  },
+  {
+    "name": "AR",
+    "extensions": [
+      "ar",
+      "a",
+      "deb",
+      "udeb",
+      "lib"
+    ]
+  },
+  {
+    "name": "ARJ",
+    "extensions": [
+      "arj"
+    ]
+  },
+  {
+    "name": "Base64",
+    "extensions": [
+      "b64"
+    ]
+  },
+  {
+    "name": "COFF",
+    "extensions": [
+      "obj"
+    ]
+  },
+  {
+    "name": "CAB",
+    "extensions": [
+      "cab"
+    ]
+  },
+  {
+    "name": "CHM",
+    "extensions": [
+      "chm",
+      "chi",
+      "chq",
+      "chw"
+    ]
+  },
+  {
+    "name": "Compound",
+    "extensions": [
+      "msi",
+      "msp",
+      "msm",
+      "doc",
+      "xls",
+      "ppt",
+      "aaf"
+    ]
+  },
+  {
+    "name": "CPIO",
+    "extensions": [
+      "cpio"
+    ]
+  },
+  {
+    "name": "CramFS",
+    "extensions": [
+      "cramfs"
+    ]
+  },
+  {
+    "name": "DMG",
+    "extensions": [
+      "dmg"
+    ]
+  },
+  {
+    "name": "ELF",
+    "extensions": [
+      "elf"
+    ]
+  },
+  {
+    "name": "EXT",
+    "extensions": [
+      "ext",
+      "ext2",
+      "ext3",
+      "ext4",
+      "img"
+    ]
+  },
+  {
+    "name": "FAT",
+    "extensions": [
+      "fat",
+      "img"
+    ]
+  },
+  {
+    "name": "FLV",
+    "extensions": [
+      "flv"
+    ]
+  },
+  {
+    "name": "GPT",
+    "extensions": [
+      "gpt",
+      "mbr"
+    ]
+  },
+  {
+    "name": "HFS",
+    "extensions": [
+      "hfs",
+      "hfsx"
+    ]
+  },
+  {
+    "name": "HXS",
+    "extensions": [
+      "hxs",
+      "hxi",
+      "hxr",
+      "hxq",
+      "hxw",
+      "lit"
+    ]
+  },
+  {
+    "name": "IHex",
+    "extensions": [
+      "ihex"
+    ]
+  },
+  {
+    "name": "ISO",
+    "extensions": [
+      "iso",
+      "img"
+    ]
+  },
+  {
+    "name": "LP",
+    "extensions": [
+      "lpimg",
+      "img"
+    ]
+  },
+  {
+    "name": "LZH",
+    "extensions": [
+      "lzh",
+      "lha"
+    ]
+  },
+  {
+    "name": "MBR",
+    "extensions": [
+      "mbr"
+    ]
+  },
+  {
+    "name": "Mach-O",
+    "extensions": [
+      "macho"
+    ]
+  },
+  {
+    "name": "MsLZ",
+    "extensions": [
+      "mslz"
+    ]
+  },
+  {
+    "name": "Universal Mach-O",
+    "extensions": [
+      "mub"
+    ]
+  },
+  {
+    "name": "NTFS",
+    "extensions": [
+      "ntfs",
+      "img"
+    ]
+  },
+  {
+    "name": "NSIS",
+    "extensions": [
+      "nsis"
+    ]
+  },
+  {
+    "name": "PE",
+    "extensions": [
+      "exe",
+      "dll",
+      "sys"
+    ]
+  },
+  {
+    "name": "PPMd",
+    "extensions": [
+      "pmd"
+    ]
+  },
+  {
+    "name": "QCOW",
+    "extensions": [
+      "qcow",
+      "qcow2",
+      "qcow2c"
+    ]
+  },
+  {
+    "name": "RAR",
+    "extensions": [
+      "rar",
+      "r00"
+    ]
+  },
+  {
+    "name": "RPM",
+    "extensions": [
+      "rpm"
+    ]
+  },
+  {
+    "name": "SWF",
+    "extensions": [
+      "swf"
+    ]
+  },
+  {
+    "name": "Sparse",
+    "extensions": [
+      "simg",
+      "img"
+    ]
+  },
+  {
+    "name": "Split",
+    "extensions": [
+      "001"
+    ]
+  },
+  {
+    "name": "SquashFS",
+    "extensions": [
+      "squashfs"
+    ]
+  },
+  {
+    "name": "TE",
+    "extensions": [
+      "te"
+    ]
+  },
+  {
+    "name": "UEFI capsule",
+    "extensions": [
+      "scap"
+    ]
+  },
+  {
+    "name": "UEFI firmware",
+    "extensions": [
+      "uefif"
+    ]
+  },
+  {
+    "name": "UDF",
+    "extensions": [
+      "udf",
+      "iso",
+      "img"
+    ]
+  },
+  {
+    "name": "VDI",
+    "extensions": [
+      "vdi"
+    ]
+  },
+  {
+    "name": "VHD",
+    "extensions": [
+      "vhd"
+    ]
+  },
+  {
+    "name": "VHDX",
+    "extensions": [
+      "vhdx",
+      "avhdx"
+    ]
+  },
+  {
+    "name": "VMDK",
+    "extensions": [
+      "vmdk"
+    ]
+  },
+  {
+    "name": "XAR",
+    "extensions": [
+      "xar",
+      "pkg",
+      "xip"
+    ]
+  },
+  {
+    "name": "Compress",
+    "extensions": [
+      "z",
+      "taz"
+    ]
+  },
+  {
+    "name": "BZIP2",
+    "extensions": [
+      "bz2",
+      "bzip2",
+      "tbz2",
+      "tbz"
+    ]
+  },
+  {
+    "name": "GZIP",
+    "extensions": [
+      "gz",
+      "gzip",
+      "tgz",
+      "tpz",
+      "apk"
+    ]
+  },
+  {
+    "name": "LZMA",
+    "extensions": [
+      "lzma"
+    ]
+  },
+  {
+    "name": "LZMA86",
+    "extensions": [
+      "lzma86"
+    ]
+  },
+  {
+    "name": "TAR",
+    "extensions": [
+      "tar",
+      "ova"
+    ]
+  },
+  {
+    "name": "WIM",
+    "extensions": [
+      "wim",
+      "swm",
+      "esd",
+      "ppkg"
+    ]
+  },
+  {
+    "name": "XZ",
+    "extensions": [
+      "xz",
+      "txz"
+    ]
+  },
+  {
+    "name": "ZIP",
+    "extensions": [
+      "zip",
+      "z01",
+      "zipx",
+      "jar",
+      "xpi",
+      "odt",
+      "ods",
+      "docx",
+      "xlsx",
+      "epub",
+      "ipa",
+      "apk",
+      "appx"
+    ]
+  },
+  {
+    "name": "Zstandard",
+    "extensions": [
+      "zst",
+      "tzst"
+    ]
+  }
+]
