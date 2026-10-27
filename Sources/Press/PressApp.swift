@@ -19,8 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var archives: [NSWindow: ArchiveModel] = [:]
     private var closing: Set<NSWindow> = []
     private var settings: SettingsWindow?
-    private var pendingExtractions: [URL] = []
-    private var directExtraction: DirectExtraction?
+    private lazy var extractions = DirectExtractions { [weak self] in self?.terminateIfOnlyExtracting() }
     private var receivedOpenRequest = false
     private var terminating = false
 
@@ -30,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // before a normal app launch creates an empty browser window.
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.receivedOpenRequest, self.archives.isEmpty,
-                  self.directExtraction == nil, !self.terminating else { return }
+                  self.extractions.isIdle, !self.terminating else { return }
             _ = self.makeWindow()
         }
     }
@@ -47,14 +46,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        directExtraction == nil && pendingExtractions.isEmpty
+        extractions.isIdle
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         terminating = true
-        pendingExtractions.removeAll()
-        directExtraction?.cancel()
-        let models = Array(archives.values) + [directExtraction?.model].compactMap { $0 }
+        extractions.terminating = true
+        let models = Array(archives.values) + extractions.models
+        extractions.cancelAll()
         guard models.contains(where: \.isBusy) else {
             for model in models { model.clearQuickLook() }
             return .terminateNow
@@ -118,13 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func openArchives(_ urls: [URL], behavior: OpenBehavior = .current) {
         if behavior == .extractBeside {
-            for url in urls {
-                let url = url.standardizedFileURL
-                if directExtraction?.source != url && !pendingExtractions.contains(url) {
-                    pendingExtractions.append(url)
-                }
-            }
-            startNextExtraction()
+            extractions.add(urls)
             return
         }
         for url in urls {
@@ -142,26 +135,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private func startNextExtraction() {
-        guard !terminating, directExtraction == nil else { return }
-        guard !pendingExtractions.isEmpty else {
-            // Leave deliberately opened browser/settings windows alone. A launch
-            // used only to extract files exits after the final job or cancellation.
-            DispatchQueue.main.async { [weak self] in
-                guard let self, !self.terminating, self.directExtraction == nil,
-                      self.pendingExtractions.isEmpty, self.archives.isEmpty,
-                      self.settings?.window?.isVisible != true else { return }
-                NSApp.terminate(nil)
-            }
-            return
+    private func terminateIfOnlyExtracting() {
+        // Leave deliberately opened browser/settings windows alone. A launch
+        // used only to extract files exits after the final job or cancellation.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.terminating, self.extractions.isIdle, self.archives.isEmpty,
+                  self.settings?.window?.isVisible != true else { return }
+            NSApp.terminate(nil)
         }
-        let source = pendingExtractions.removeFirst()
-        let job = DirectExtraction(source: source) { [weak self] in
-            self?.directExtraction = nil
-            self?.startNextExtraction()
-        }
-        directExtraction = job
-        job.start()
     }
 
     @objc private func chooseArchive() {

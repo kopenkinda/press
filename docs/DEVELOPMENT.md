@@ -114,7 +114,8 @@ Developer ID signing or notarization.
 
 - `PressApp.swift` owns native window tabs, Finder opening, and menus.
 - `ContentView.swift` owns the file list and drop area.
-- `DirectExtraction.swift` owns windowless extraction and standalone prompts.
+- `DirectExtraction.swift` owns windowless extraction (up to five archives at once
+  in one stacked progress panel) and standalone prompts.
 - `PasswordPrompt.swift` shares the password UI between windows and direct extraction.
 - `ArchiveViewController.swift` connects each window to macOS Quick Look.
 - `ArchiveModel.swift` owns one archive's preview and extraction state.
