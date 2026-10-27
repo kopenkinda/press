@@ -107,7 +107,7 @@ struct ArchiveTests {
         #expect(try workspace.names() == [name])
     }
 
-    @Test(arguments: ["Link.tar", "Oversize.zip"])
+    @Test(arguments: ["Link.tar", "Oversize.zip", "Overlap.zip"])
     func blocksExtractionOfLinksAndOversizeArchives(name: String) async throws {
         let workspace = try Workspace()
         defer { workspace.remove() }

@@ -21,7 +21,7 @@ Original archives and existing destination files remain untouched. Press extract
 
 In General, choose separate behaviors for opening archives and dropping them into Press: Preview in Press, Extract Beside the Archive, or Choose Where to Extract. Both start with preview.
 
-For example, set Finder opening to Extract Beside the Archive and keep drops set to Preview. Finder extraction runs without opening the main window, asks for a password if needed, and reveals the finished folder in Finder. Press then quits unless you already have a browser or Settings window open.
+For example, set Finder opening to Extract Beside the Archive and keep drops set to Preview. Finder extraction runs without opening the main window. Like Archive Utility, it shows a small progress window with a stop button, asks for a password if needed, and reveals the finished folder in Finder. Press then quits unless you already have a browser or Settings window open.
 
 In File Types, search for a format and click Use Press to make it the default. macOS may ask for confirmation.
 
@@ -29,9 +29,11 @@ In File Types, search for a format and click Use Press to make it the default. m
 
 Supports RAR, ZIP/ZIPX, 7z, TAR, GZIP, BZIP2, XZ, Zstandard, CAB, ISO, DMG, and the other archive and container readers in 7-Zip 26.03. Compressed TAR files show their inner folder tree. Other nested archives appear as files. Specific compression methods depend on the bundled engine.
 
-This is a prototype. Extraction is limited to 10 GB expanded and 10,000 entries per archive. Quick Look is limited to 100 MB per file and 60 seconds. Unsafe paths, symbolic links, and special files are rejected.
+This is a prototype. Extraction is limited to 10,000 entries per archive. Quick Look is limited to 100 MB per file and 60 seconds. Unsafe paths, symbolic links, and special files are rejected.
 
-The helper runs with network access denied and writes restricted to temporary output. Size checks run during extraction, so limits can be exceeded between checks. They reduce disk exhaustion risk but are not a hard quota or complete protection against malicious archives. See [development notes](docs/DEVELOPMENT.md) for the full limits and sandbox details.
+There is no fixed size cap. Instead, Press blocks likely decompression bombs: archives that expand past 1 GB and more than 1,000 times their own size, and ZIP files whose entries share compressed data. Extraction also stops before the destination has less than 500 MB free.
+
+The helper runs with network access denied and writes restricted to temporary output. Size checks run during extraction, so output can grow a little past a limit between checks. They reduce disk exhaustion risk but are not a hard quota or complete protection against malicious archives. See [development notes](docs/DEVELOPMENT.md) for the full limits and sandbox details.
 
 ## Build and sign
 

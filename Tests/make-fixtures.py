@@ -60,6 +60,14 @@ for signature, offset in [(b"PK\x03\x04", 22), (b"PK\x01\x02", 24)]:
         struct.pack_into("<I", data, start + offset, 3_500_000_000)
         start += 4
 (root / "Oversize.zip").write_bytes(data)
+# An overlapping ZIP bomb: two directory entries share one compressed stream.
+with zipfile.ZipFile(root / "Overlap.zip", "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.writestr("a.txt", b"0" * 100_000)
+    archive.writestr("b.txt", b"0" * 100_000)
+data = bytearray((root / "Overlap.zip").read_bytes())
+second = data.find(b"PK\x01\x02", data.find(b"PK\x01\x02") + 4)
+struct.pack_into("<I", data, second + 42, 0)
+(root / "Overlap.zip").write_bytes(data)
 (root / "hello.txt").write_bytes(files["Folder/hello.txt"])
 for name, options in [("Plain.7z", []), ("Encrypted.7z", ["-psecret", "-mhe=on"]),
                       ("Encrypted.zip", ["-psecret", "-mem=AES256"])]:

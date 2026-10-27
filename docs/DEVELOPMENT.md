@@ -58,7 +58,11 @@ Both settings default to Preview in Press. Existing opening preferences are
 preserved when upgrading; the new drop setting starts with preview. You can
 use Extract Beside the Archive for Finder and Preview in Press for drops.
 
-Extract Beside the Archive runs without opening an archive window. An encrypted
+Extract Beside the Archive runs without opening an archive window. A job that
+takes longer than 0.4 seconds shows a small progress window with the archive's
+icon, bytes written, and a stop button. Stopping or closing it cancels that job
+and removes its partial output. The bar is determinate when the listing reports
+expanded sizes. Archive tabs show the same progress in their footer. An encrypted
 archive shows a standalone password dialog; failures show an alert. Multiple
 archives are processed in sequence. Each finished folder is revealed in Finder.
 Press exits when these jobs finish if no
@@ -132,15 +136,29 @@ extractions with an exclusive rename so existing folders cannot be replaced.
 
 ## Prototype limits
 
-Press permits up to 10 GB expanded and 10,000 entries per archive. A listing
+Press permits up to 10,000 entries per archive. There is no fixed expanded-size
+cap. Instead, these decompression bomb heuristics apply:
+
+- Expansion ratio. Any archive may expand to 1 GB. Beyond that, output may not
+  exceed 1,000 times the archive's file size. DEFLATE tops out near 1,032:1,
+  and real data rarely comes close. Previews whose reported size crosses the
+  line are blocked, and the same limit is enforced on actual output.
+- Overlapping ZIP entries. 7-Zip reports each ZIP entry's data offset. When two
+  entries in one volume start at the same offset or one starts inside another's
+  compressed data, the archive is blocked as an overlapping bomb.
+- Free space. Extraction needs the reported size plus 500 MB free before it
+  starts, and stops if the destination volume drops below 500 MB.
+
+A listing
 has a 16 MB output limit and a 60-second timeout. Missing expanded sizes
 appear as unknown; extraction still monitors actual output. Ambiguous listings
-are rejected. Compressed TAR streams have a separate 10 GB decoded-byte limit.
+are rejected. Compressed TAR streams apply the same expansion ratio to decoded bytes.
 Their common compound extensions and aliases select this streaming behavior. An archive whose file size or modification
 time changes after preview must be reloaded before extraction.
 
 Header sizes are untrusted. During extraction, Press checks the output's
 logical size and entry count every 200 ms and checks again before publishing.
+The same poll checks free space and reports progress.
 Crossing a limit stops the helper and deletes that operation's output.
 Polling can overshoot a limit between checks. These safeguards reduce disk
 exhaustion risk; they are not a hard disk quota or complete protection against
@@ -165,8 +183,9 @@ The suite covers folder trees, ZIP/ZIPX, RAR, 7z, TAR and compressed TAR,
 standalone compressed files, password prompts and retries, per-tab isolation,
 opening and drop preferences, Quick Look file selection and cleanup,
 cancellation, destination collisions, changed archives,
-unsafe paths, links, size and entry limits, and Finder registration metadata.
-Large logical-size checks use sparse files instead of allocating 10 GB.
+unsafe paths, links, size and entry limits, decompression bomb heuristics,
+and Finder registration metadata. Large logical-size checks use sparse files
+instead of allocating gigabytes.
 
 Native window/tab interactions, Quick Look presentation, destination sheets,
 macOS association consent, and icon appearance still need manual checks. The suite samples supported

@@ -77,10 +77,33 @@ struct SafetyTests {
         FileManager.default.createFile(atPath: file.path, contents: nil)
         let handle = try FileHandle(forWritingTo: file)
         defer { try? handle.close() }
-        try handle.truncate(atOffset: UInt64(Extractor.sizeLimit))
-        try Extractor.checkOutput(workspace.root)
-        try handle.truncate(atOffset: UInt64(Extractor.sizeLimit + 1))
-        #expect(throws: ExtractionError.self) { try Extractor.checkOutput(workspace.root) }
+        let limit = Extractor.expansionLimit(archiveSize: 1_000)
+        try handle.truncate(atOffset: UInt64(limit))
+        #expect(try Extractor.checkOutput(workspace.root, limit: limit) == limit)
+        try handle.truncate(atOffset: UInt64(limit + 1))
+        #expect(throws: ExtractionError.self) { try Extractor.checkOutput(workspace.root, limit: limit) }
+    }
+
+    @Test func expansionLimitAllowsSmallArchivesAndScalesWithSize() {
+        #expect(Extractor.expansionLimit(archiveSize: 0) == Extractor.expansionAllowance)
+        #expect(Extractor.expansionLimit(archiveSize: 1_000) == Extractor.expansionAllowance)
+        #expect(Extractor.expansionLimit(archiveSize: 50_000_000) == 50_000_000_000)
+        #expect(Extractor.expansionLimit(archiveSize: .max / 2) == .max)
+    }
+
+    @Test func detectsOverlappingZipEntries() throws {
+        func listing(_ entries: [(offset: Int, packed: Int, volume: Int)]) throws -> [ArchiveEntry] {
+            try Extractor.parseListing(entries.enumerated().map { index, entry in
+                "Path = \(index)\nSize = 1\nPacked Size = \(entry.packed)\nOffset = \(entry.offset)\nVolume Index = \(entry.volume)\n"
+            }.joined(separator: "\n"), fallbackName: "unused")
+        }
+        #expect(!Extractor.hasOverlappingEntries(try listing([(0, 100, 0), (130, 50, 0), (200, 0, 0)])))
+        #expect(!Extractor.hasOverlappingEntries(try listing([(0, 100, 0), (0, 100, 1)])))
+        #expect(Extractor.hasOverlappingEntries(try listing([(0, 100, 0), (0, 100, 0)])))
+        #expect(Extractor.hasOverlappingEntries(try listing([(0, 100, 0), (60, 100, 0)])))
+        // Formats without offsets, such as solid 7z, are not checked.
+        let solid = try Extractor.parseListing("Path = a\nSize = 1\nPacked Size = 9\n\nPath = b\nSize = 1\n", fallbackName: "unused")
+        #expect(!Extractor.hasOverlappingEntries(solid))
     }
 
     @Test func rejectsLinksSpecialFilesAndTooManyOutputEntries() throws {

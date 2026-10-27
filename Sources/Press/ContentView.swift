@@ -163,7 +163,11 @@ struct ContentView: View {
             }
             HStack {
                 if model.isBusy {
-                    if model.phase == .extracting || model.phase == .preparingPreview {
+                    if let fraction = model.extractionProgress {
+                        ProgressView(value: fraction).frame(maxWidth: 200)
+                        Text("Extracting… \(fraction.formatted(.percent.precision(.fractionLength(0))))")
+                            .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                    } else if model.phase == .extracting || model.phase == .preparingPreview {
                         ProgressView().controlSize(.small)
                         Text(model.phase == .preparingPreview ? "Preparing Quick Look…" : "Extracting…")
                             .font(.callout).foregroundStyle(.secondary)
@@ -171,7 +175,7 @@ struct ContentView: View {
                     Spacer()
                     Button("Cancel", action: model.cancel)
                 } else {
-                    Text("10 GB · 10,000 entries maximum")
+                    Text("10,000 entries maximum")
                         .font(.caption).foregroundStyle(.secondary)
                     Spacer()
                     Button("Open…", action: chooseArchives)

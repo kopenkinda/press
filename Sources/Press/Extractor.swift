@@ -14,6 +14,10 @@ struct ArchiveEntry: Identifiable, Sendable {
     let isDirectory: Bool
     let encrypted: Bool
     let isLink: Bool
+    // ZIP reports where each entry's compressed data starts in the archive.
+    var packedSize: Int64? = nil
+    var offset: Int64? = nil
+    var volume: Int? = nil
 }
 
 struct ArchiveNode: Identifiable, Sendable {
@@ -111,8 +115,14 @@ struct Extractor: Sendable {
         self.helperURL = helperURL
     }
 
-    static let sizeLimit: Int64 = 10_000_000_000
     static let entryLimit = 10_000
+    // Decompression bomb heuristics. Any archive may expand to 1 GB. Beyond
+    // that, output may not exceed 1,000 times the archive's size, which is
+    // close to DEFLATE's maximum ratio and far above typical real data.
+    static let expansionRatio: Int64 = 1_000
+    static let expansionAllowance: Int64 = 1_000_000_000
+    // Extraction stops before the destination volume drops below this.
+    static let diskReserve: Int64 = 500_000_000
     static let previewSizeLimit: Int64 = 100_000_000
     private static let logLimit: Int64 = 16 * 1024 * 1024
 
@@ -125,6 +135,7 @@ struct Extractor: Sendable {
         defer { try? FileManager.default.removeItem(at: staging) }
         let output = try await run(["l", "-slt", "-ba"], source: source, password: password, staging: staging)
         let entries = try Self.parseListing(output, fallbackName: source.deletingPathExtension().lastPathComponent)
+        let archiveSize = Int64(original.fileSize ?? 0)
         var total: Int64 = 0
         var knownSize = true
         var blocked: String?
@@ -135,7 +146,12 @@ struct Extractor: Sendable {
             total = sum.partialValue
             if entry.isLink { blocked = "This archive contains links. This prototype only extracts files and folders." }
         }
-        if total > Self.sizeLimit { blocked = "The reported expanded size exceeds this prototype's 10 GB limit." }
+        if total > Self.expansionLimit(archiveSize: archiveSize) {
+            blocked = "This archive looks like a decompression bomb. It reports \(Self.format(total)) expanded from \(Self.format(archiveSize))."
+        }
+        if Self.hasOverlappingEntries(entries) {
+            blocked = "This archive looks like a decompression bomb. Several entries reuse the same compressed data."
+        }
         source.removeAllCachedResourceValues()
         let current = try source.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         guard current.fileSize == original.fileSize, current.contentModificationDate == original.contentModificationDate else {
@@ -146,7 +162,8 @@ struct Extractor: Sendable {
                               modified: current.contentModificationDate ?? .distantPast, blockedReason: blocked)
     }
 
-    func extract(_ source: URL, to parent: URL, preview: ArchivePreview, password: String?) async throws -> URL {
+    func extract(_ source: URL, to parent: URL, preview: ArchivePreview, password: String?,
+                 progress: @escaping @Sendable (Int64) -> Void = { _ in }) async throws -> URL {
         // Reusing the URL from preview can otherwise reuse stale file metadata.
         var source = source
         source.removeAllCachedResourceValues()
@@ -158,17 +175,25 @@ struct Extractor: Sendable {
             throw ExtractionError(message: "The archive changed. Reload its preview before extracting.")
         }
         let parent = parent.resolvingSymlinksInPath()
-        if let available = try? parent.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity,
-           Int64(available) < (preview.expandedSize ?? 0) + 100_000_000 {
+        if let available = Self.availableCapacity(parent), available < (preview.expandedSize ?? 0) + Self.diskReserve {
             throw ExtractionError(message: "There isn't enough free space in that destination.")
         }
+        let limit = Self.expansionLimit(archiveSize: preview.archiveSize)
         let staging = try Self.temporaryFolder(in: parent)
         defer { try? FileManager.default.removeItem(at: staging) }
         let contents = staging.appendingPathComponent("Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: false)
         _ = try await run(["x", "-y", "-aou", "-bb0", "-snld0", "-o\(contents.path)"],
-                          source: source, password: password, staging: staging, contents: contents)
-        try Self.checkOutput(contents)
+                          source: source, password: password, staging: staging, contents: contents,
+                          outputLimit: limit) { written in
+            // The output may be sparse or compress well on disk, so check the
+            // volume itself as well as the logical size.
+            if let available = Self.availableCapacity(parent), available < Self.diskReserve {
+                throw ExtractionError(message: "Extraction stopped because the destination is almost out of space.")
+            }
+            progress(written)
+        }
+        try Self.checkOutput(contents, limit: limit)
         let name = ArchiveFormats.folderName(for: source)
         for suffix in 1...10_000 {
             try Task.checkCancellation()
@@ -231,6 +256,33 @@ struct Extractor: Sendable {
         }
     }
 
+    static func expansionLimit(archiveSize: Int64) -> Int64 {
+        let scaled = max(archiveSize, 1).multipliedReportingOverflow(by: expansionRatio)
+        return scaled.overflow ? .max : max(scaled.partialValue, expansionAllowance)
+    }
+
+    // Overlapping ZIP bombs point many directory entries at one compressed
+    // stream. In a well-formed ZIP, each entry's data starts after the last ends.
+    static func hasOverlappingEntries(_ entries: [ArchiveEntry]) -> Bool {
+        let located = entries.compactMap { entry in
+            entry.offset.map { (volume: entry.volume ?? 0, offset: $0, size: entry.packedSize ?? 0) }
+        }.sorted { ($0.volume, $0.offset) < ($1.volume, $1.offset) }
+        return zip(located, located.dropFirst()).contains { previous, next in
+            previous.volume == next.volume
+                && (next.offset == previous.offset || next.offset - previous.offset < previous.size)
+        }
+    }
+
+    private static func availableCapacity(_ folder: URL) -> Int64? {
+        var folder = folder
+        folder.removeAllCachedResourceValues()
+        return (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity).flatMap { $0 }.map(Int64.init)
+    }
+
+    private static func format(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
     private static func temporaryFolder(in parent: URL) throws -> URL {
         // Foundation preserves aliases such as /var on macOS. Sandbox path
         // rules need the actual /private/var path, including for temporary files.
@@ -246,7 +298,8 @@ struct Extractor: Sendable {
     }
 
     private func run(_ arguments: [String], source: URL, password: String?, staging: URL, contents: URL? = nil,
-                     outputLimit: Int64 = sizeLimit, timeLimit: TimeInterval? = nil) async throws -> String {
+                     outputLimit: Int64 = .max, timeLimit: TimeInterval? = nil,
+                     monitor: ((Int64) throws -> Void)? = nil) async throws -> String {
         guard let helper = helperURL,
               FileManager.default.isExecutableFile(atPath: helper.path) else {
             throw ExtractionError(message: "The extraction helper is missing. Rebuild Press and try again.")
@@ -263,6 +316,9 @@ struct Extractor: Sendable {
         let input = Pipe()
         let decoderInput = Pipe()
         defer { try? input.fileHandleForWriting.close(); try? decoderInput.fileHandleForWriting.close() }
+        // A helper can exit before reading its password. Report EPIPE instead
+        // of letting SIGPIPE terminate Press.
+        for pipe in [input, decoderInput] { _ = fcntl(pipe.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1) }
 
         func makeProcess(_ command: [String], input: Pipe, output: Any, errorLog: FileHandle,
                          errorURL: URL, canWrite: Bool) -> Process {
@@ -280,6 +336,7 @@ struct Extractor: Sendable {
         }
 
         let wrapped = ArchiveFormats.isCompressedTar(source)
+        let streamLimit = Self.expansionLimit(archiveSize: Int64((try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0))
         let command = arguments + ["-bd", "-sccUTF-8"] + (wrapped ? ["-ttar", "-si"] : ["--", source.path])
         let process = makeProcess(command, input: input, output: log, errorLog: log, errorURL: logURL, canWrite: contents != nil)
         let decoded = Pipe()
@@ -298,14 +355,13 @@ struct Extractor: Sendable {
                 // is written to disk, and every decompressed byte is counted.
                 let sink = input.fileHandleForWriting
                 let reader = decoded.fileHandleForReading
-                _ = fcntl(sink.fileDescriptor, F_SETNOSIGPIPE, 1)
                 stream = Task.detached {
                     defer { try? sink.close(); try? reader.close() }
                     do {
                         var count: Int64 = 0
                         while let block = try reader.read(upToCount: 64 * 1024), !block.isEmpty {
-                            guard Int64(block.count) <= Self.sizeLimit - count else {
-                                throw ExtractionError(message: "The decompressed TAR stream exceeds the 10 GB limit.")
+                            guard Int64(block.count) <= streamLimit - count else {
+                                throw ExtractionError(message: "The compressed TAR expands more than 1,000 times its size. It looks like a decompression bomb.")
                             }
                             count += Int64(block.count)
                             try sink.write(contentsOf: block)
@@ -329,7 +385,10 @@ struct Extractor: Sendable {
                         throw ExtractionError(message: "The archive's listing is too large for this prototype.")
                     }
                 }
-                if let contents { try Self.checkOutput(contents, limit: outputLimit) }
+                if let contents {
+                    let written = try Self.checkOutput(contents, limit: outputLimit)
+                    try monitor?(written)
+                }
                 if Date().timeIntervalSince(started) > (timeLimit ?? (contents == nil ? 60 : .infinity)) {
                     throw ExtractionError(message: "Reading the archive took too long. The preview was stopped.")
                 }
@@ -395,11 +454,17 @@ struct Extractor: Sendable {
                 throw ExtractionError(message: "This archive exceeds the prototype's limit of 10,000 entries.")
             }
             let attributes = fields["Attributes"] ?? fields["Mode"] ?? ""
+            let packedSize = fields["Packed Size"].flatMap(Int64.init)
+            let offset = fields["Offset"].flatMap(Int64.init)
+            if packedSize.map({ $0 < 0 }) == true || offset.map({ $0 < 0 }) == true {
+                throw ExtractionError(message: "An entry reports an invalid location in the archive.")
+            }
             entries.append(ArchiveEntry(id: entries.count, path: path, size: size,
                 isDirectory: fields["Folder"] == "+" || attributes.hasPrefix("D") || attributes.hasPrefix("d") || attributes.contains(" d"),
                 encrypted: fields["Encrypted"] == "+",
                 isLink: fields["Symbolic Link"]?.isEmpty == false || fields["Hard Link"]?.isEmpty == false
-                    || attributes.hasPrefix("l") || attributes.contains(" l")))
+                    || attributes.hasPrefix("l") || attributes.contains(" l"),
+                packedSize: packedSize, offset: offset, volume: fields["Volume Index"].flatMap(Int.init)))
             fields.removeAll()
         }
         for line in output.components(separatedBy: .newlines) {
@@ -418,7 +483,8 @@ struct Extractor: Sendable {
 
     // Header sizes are untrusted. Monitor actual logical sizes and entry count
     // while the helper runs, and check again before publishing the result.
-    static func checkOutput(_ contents: URL, limit: Int64 = sizeLimit) throws {
+    @discardableResult
+    static func checkOutput(_ contents: URL, limit: Int64 = .max) throws -> Int64 {
         var enumerationError: Error?
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
         guard let files = FileManager.default.enumerator(at: contents, includingPropertiesForKeys: Array(keys),
@@ -440,11 +506,13 @@ struct Extractor: Sendable {
                     throw ExtractionError(message: "Couldn't determine the extracted file's size.")
                 }
                 guard Int64(fileSize) <= limit - size else {
-                    throw ExtractionError(message: limit == previewSizeLimit ? "Quick Look previews are limited to 100 MB per file." : "Extraction stopped because the output exceeded 10 GB.")
+                    throw ExtractionError(message: limit == previewSizeLimit ? "Quick Look previews are limited to 100 MB per file."
+                        : "Extraction stopped because the output grew past 1,000 times the archive's size. It looks like a decompression bomb.")
                 }
                 size += Int64(fileSize)
             }
         }
         if let enumerationError { throw enumerationError }
+        return size
     }
 }
